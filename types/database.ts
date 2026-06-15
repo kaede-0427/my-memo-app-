@@ -4,12 +4,14 @@ export type Status = 'todo' | 'in_progress' | 'on_hold' | 'review' | 'done'
 export interface Project {
   id: string
   name: string
+  icon: string
   created_at: string
 }
 
 export interface Memo {
   id: string
   project_id: string
+  title: string
   content: string
   updated_at: string
 }
@@ -29,14 +31,14 @@ export type Database = {
     Tables: {
       projects: {
         Row: Project
-        Insert: { name: string }
-        Update: { name?: string }
+        Insert: { name: string; icon?: string }
+        Update: { name?: string; icon?: string }
         Relationships: []
       }
       memos: {
         Row: Memo
-        Insert: { project_id: string; content?: string }
-        Update: { content?: string }
+        Insert: { project_id: string; title?: string; content?: string }
+        Update: { title?: string; content?: string }
         Relationships: []
       }
       tasks: {

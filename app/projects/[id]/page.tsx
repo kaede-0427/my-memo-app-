@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
@@ -9,8 +9,9 @@ import { supabase } from '@/lib/supabase'
 import type { Project, Memo, Task, Priority } from '@/types/database'
 import TaskItem from '@/components/TaskItem'
 import AddTaskForm from '@/components/AddTaskForm'
+import IconUploader from '@/components/IconUploader'
 
-type Tab = 'memo' | 'tasks'
+type MainTab = 'memo' | 'tasks'
 
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 }
 
@@ -30,26 +31,38 @@ export default function ProjectPage() {
   const router = useRouter()
 
   const [project, setProject] = useState<Project | null>(null)
-  const [memo, setMemo] = useState<Memo | null>(null)
+  const [memos, setMemos] = useState<Memo[]>([])
+  const [activeMemoId, setActiveMemoId] = useState<string | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
-  const [tab, setTab] = useState<Tab>('memo')
-  const [memoContent, setMemoContent] = useState('')
+  const [mainTab, setMainTab] = useState<MainTab>('memo')
   const [editingMemo, setEditingMemo] = useState(false)
+  const [memoContent, setMemoContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  const [editingName, setEditingName] = useState(false)
+  const [nameValue, setNameValue] = useState('')
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  const [renamingMemoId, setRenamingMemoId] = useState<string | null>(null)
+  const [renameMemoValue, setRenameMemoValue] = useState('')
+  const renameMemoRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     async function load() {
-      const [projectRes, memoRes, tasksRes] = await Promise.all([
+      const [projectRes, memosRes, tasksRes] = await Promise.all([
         supabase.from('projects').select('*').eq('id', id).single(),
-        supabase.from('memos').select('*').eq('project_id', id).single(),
+        supabase.from('memos').select('*').eq('project_id', id).order('updated_at', { ascending: true }),
         supabase.from('tasks').select('*').eq('project_id', id),
       ])
       if (projectRes.error || !projectRes.data) { router.push('/'); return }
       setProject(projectRes.data)
-      if (memoRes.data) {
-        setMemo(memoRes.data)
-        setMemoContent(memoRes.data.content)
+      setNameValue(projectRes.data.name)
+      const loadedMemos: Memo[] = memosRes.data ?? []
+      setMemos(loadedMemos)
+      if (loadedMemos.length > 0) {
+        setActiveMemoId(loadedMemos[0].id)
+        setMemoContent(loadedMemos[0].content)
       }
       if (tasksRes.data) setTasks(sortTasks(tasksRes.data))
       setLoading(false)
@@ -57,15 +70,26 @@ export default function ProjectPage() {
     load()
   }, [id, router])
 
+  useEffect(() => { if (editingName) nameRef.current?.focus() }, [editingName])
+  useEffect(() => { if (renamingMemoId) renameMemoRef.current?.focus() }, [renamingMemoId])
+
+  const activeMemo = memos.find(m => m.id === activeMemoId) ?? null
+
+  function switchMemo(memo: Memo) {
+    if (editingMemo) return
+    setActiveMemoId(memo.id)
+    setMemoContent(memo.content)
+  }
+
   const saveMemo = useCallback(async () => {
-    if (!memo) return
+    if (!activeMemo) return
     setSaving(true)
-    await supabase.from('memos').update({ content: memoContent }).eq('id', memo.id)
+    await supabase.from('memos').update({ content: memoContent }).eq('id', activeMemo.id)
+    setMemos(prev => prev.map(m => m.id === activeMemo.id ? { ...m, content: memoContent } : m))
     setSaving(false)
     setEditingMemo(false)
-  }, [memo, memoContent])
+  }, [activeMemo, memoContent])
 
-  // Ctrl+S でメモ保存
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === 's' && editingMemo) {
@@ -77,14 +101,59 @@ export default function ProjectPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [editingMemo, saveMemo])
 
+  async function addMemoTab() {
+    const { data, error } = await supabase
+      .from('memos')
+      .insert({ project_id: id, title: `ページ${memos.length + 1}`, content: '' })
+      .select()
+      .single()
+    if (!error && data) {
+      setMemos(prev => [...prev, data])
+      setActiveMemoId(data.id)
+      setMemoContent('')
+      setEditingMemo(false)
+    }
+  }
+
+  async function deleteMemoTab(memoId: string) {
+    if (memos.length <= 1) { alert('最後のページは削除できません'); return }
+    if (!confirm('このページを削除しますか？')) return
+    await supabase.from('memos').delete().eq('id', memoId)
+    const remaining = memos.filter(m => m.id !== memoId)
+    setMemos(remaining)
+    if (activeMemoId === memoId) {
+      setActiveMemoId(remaining[0].id)
+      setMemoContent(remaining[0].content)
+    }
+  }
+
+  async function saveMemoTitle(memoId: string) {
+    const title = renameMemoValue.trim() || 'ページ'
+    await supabase.from('memos').update({ title }).eq('id', memoId)
+    setMemos(prev => prev.map(m => m.id === memoId ? { ...m, title } : m))
+    setRenamingMemoId(null)
+  }
+
+  async function saveProjectName() {
+    const name = nameValue.trim()
+    if (!name || !project) { setEditingName(false); return }
+    await supabase.from('projects').update({ name }).eq('id', project.id)
+    setProject(prev => prev ? { ...prev, name } : prev)
+    setEditingName(false)
+  }
+
+  async function updateProjectIcon(url: string) {
+    if (!project) return
+    await supabase.from('projects').update({ icon: url }).eq('id', project.id)
+    setProject(prev => prev ? { ...prev, icon: url } : prev)
+  }
+
   function handleTaskUpdate(updated: Task) {
     setTasks(prev => sortTasks(prev.map(t => t.id === updated.id ? updated : t)))
   }
-
-  function handleTaskDelete(id: string) {
-    setTasks(prev => prev.filter(t => t.id !== id))
+  function handleTaskDelete(taskId: string) {
+    setTasks(prev => prev.filter(t => t.id !== taskId))
   }
-
   function handleTaskAdd(task: Task) {
     setTasks(prev => sortTasks([...prev, task]))
   }
@@ -93,29 +162,61 @@ export default function ProjectPage() {
   const activeTasks = tasks.filter(t => t.status !== 'done')
 
   if (loading) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-10 text-gray-400 text-sm">読み込み中...</div>
-    )
+    return <div className="max-w-2xl mx-auto px-4 py-10 text-gray-400 text-sm">読み込み中...</div>
   }
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 w-full">
       {/* ヘッダー */}
       <div className="mb-6">
-        <Link href="/" className="text-xs text-gray-400 hover:text-gray-600 mb-3 inline-block">
-          ← プロジェクト一覧
+        <Link href="/" className="text-xs text-gray-400 hover:text-gray-600 mb-4 inline-block">
+          &larr; プロジェクト一覧
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">{project?.name}</h1>
+        <div className="flex items-center gap-3">
+          <IconUploader
+            projectId={project?.id ?? ''}
+            iconUrl={project?.icon ?? null}
+            projectName={project?.name ?? ''}
+            onChange={updateProjectIcon}
+          />
+          {editingName ? (
+            <input
+              ref={nameRef}
+              value={nameValue}
+              onChange={e => setNameValue(e.target.value)}
+              onBlur={saveProjectName}
+              onKeyDown={e => {
+                if (e.key === 'Enter') saveProjectName()
+                if (e.key === 'Escape') setEditingName(false)
+              }}
+              className="text-2xl font-bold text-gray-900 border-b-2 border-gray-400 bg-transparent focus:outline-none flex-1"
+            />
+          ) : (
+            <h1
+              className="text-2xl font-bold text-gray-900 cursor-pointer group flex items-center gap-2"
+              onDoubleClick={() => setEditingName(true)}
+              title="ダブルクリックで名前を変更"
+            >
+              {project?.name}
+              <span
+                className="text-sm font-normal text-gray-300 group-hover:text-gray-400 transition-colors"
+                onClick={() => setEditingName(true)}
+              >
+                編集
+              </span>
+            </h1>
+          )}
+        </div>
       </div>
 
-      {/* タブ */}
-      <div className="flex border-b border-gray-200 mb-6">
-        {(['memo', 'tasks'] as Tab[]).map(t => (
+      {/* メインタブ */}
+      <div className="flex border-b border-gray-200">
+        {(['memo', 'tasks'] as MainTab[]).map(t => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => setMainTab(t)}
             className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              tab === t
+              mainTab === t
                 ? 'border-gray-900 text-gray-900'
                 : 'border-transparent text-gray-400 hover:text-gray-600'
             }`}
@@ -126,8 +227,60 @@ export default function ProjectPage() {
       </div>
 
       {/* メモタブ */}
-      {tab === 'memo' && (
+      {mainTab === 'memo' && (
         <div>
+          {/* メモサブタブ */}
+          <div className="flex items-center border-b border-gray-100 mb-4 overflow-x-auto">
+            {memos.map(memo => (
+              <div
+                key={memo.id}
+                className={`group flex items-center gap-1 flex-shrink-0 border-b-2 -mb-px transition-colors ${
+                  activeMemoId === memo.id
+                    ? 'border-gray-500 text-gray-800'
+                    : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                {renamingMemoId === memo.id ? (
+                  <input
+                    ref={renameMemoRef}
+                    value={renameMemoValue}
+                    onChange={e => setRenameMemoValue(e.target.value)}
+                    onBlur={() => saveMemoTitle(memo.id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') saveMemoTitle(memo.id)
+                      if (e.key === 'Escape') setRenamingMemoId(null)
+                    }}
+                    className="text-sm border-b border-gray-400 bg-transparent focus:outline-none w-24 px-1 py-2"
+                  />
+                ) : (
+                  <button
+                    onClick={() => switchMemo(memo)}
+                    onDoubleClick={() => { setRenamingMemoId(memo.id); setRenameMemoValue(memo.title) }}
+                    className="text-sm px-3 py-2.5 whitespace-nowrap"
+                    title="ダブルクリックで名前変更"
+                  >
+                    {memo.title}
+                  </button>
+                )}
+                {memos.length > 1 && (
+                  <button
+                    onClick={() => deleteMemoTab(memo.id)}
+                    className="text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 pr-1 text-xs transition-opacity"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={addMemoTab}
+              className="text-gray-300 hover:text-gray-600 px-3 py-2 text-sm flex-shrink-0 transition-colors"
+            >
+              + 追加
+            </button>
+          </div>
+
+          {/* メモ本文 */}
           {editingMemo ? (
             <div className="space-y-3">
               <textarea
@@ -146,7 +299,7 @@ export default function ProjectPage() {
                   {saving ? '保存中...' : '保存'}
                 </button>
                 <button
-                  onClick={() => { setEditingMemo(false); setMemoContent(memo?.content ?? '') }}
+                  onClick={() => { setEditingMemo(false); setMemoContent(activeMemo?.content ?? '') }}
                   className="text-sm text-gray-500 px-3 py-2 rounded-lg hover:bg-gray-200"
                 >
                   キャンセル
@@ -158,13 +311,10 @@ export default function ProjectPage() {
             <div
               onClick={() => setEditingMemo(true)}
               className="min-h-[200px] cursor-text border border-transparent hover:border-gray-200 rounded-lg px-1 py-1 transition-colors"
-              title="クリックして編集"
             >
               {memoContent ? (
                 <div className="prose text-sm">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {memoContent}
-                  </ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{memoContent}</ReactMarkdown>
                 </div>
               ) : (
                 <p className="text-gray-300 text-sm">クリックしてメモを書く...</p>
@@ -175,19 +325,12 @@ export default function ProjectPage() {
       )}
 
       {/* タスクタブ */}
-      {tab === 'tasks' && (
-        <div className="space-y-2">
+      {mainTab === 'tasks' && (
+        <div className="space-y-2 mt-6">
           {activeTasks.map(task => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              onUpdate={handleTaskUpdate}
-              onDelete={handleTaskDelete}
-            />
+            <TaskItem key={task.id} task={task} onUpdate={handleTaskUpdate} onDelete={handleTaskDelete} />
           ))}
-
           <AddTaskForm projectId={id} onAdd={handleTaskAdd} />
-
           {doneTasks.length > 0 && (
             <details className="mt-4">
               <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none py-2">
@@ -195,17 +338,11 @@ export default function ProjectPage() {
               </summary>
               <div className="space-y-2 mt-2">
                 {doneTasks.map(task => (
-                  <TaskItem
-                    key={task.id}
-                    task={task}
-                    onUpdate={handleTaskUpdate}
-                    onDelete={handleTaskDelete}
-                  />
+                  <TaskItem key={task.id} task={task} onUpdate={handleTaskUpdate} onDelete={handleTaskDelete} />
                 ))}
               </div>
             </details>
           )}
-
           {tasks.length === 0 && (
             <p className="text-center text-gray-300 text-sm py-8">タスクがありません</p>
           )}
