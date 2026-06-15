@@ -4,7 +4,8 @@ export type Status = 'todo' | 'in_progress' | 'on_hold' | 'review' | 'done'
 export interface Project {
   id: string
   name: string
-  icon: string
+  icon: string | null
+  position: number
   created_at: string
 }
 
@@ -23,6 +24,7 @@ export interface Task {
   status: Status
   priority: Priority
   due_date: string | null
+  position: number
   created_at: string
 }
 
@@ -31,8 +33,8 @@ export type Database = {
     Tables: {
       projects: {
         Row: Project
-        Insert: { name: string; icon?: string }
-        Update: { name?: string; icon?: string }
+        Insert: { name: string; icon?: string | null; position?: number }
+        Update: { name?: string; icon?: string | null; position?: number }
         Relationships: []
       }
       memos: {
@@ -49,12 +51,14 @@ export type Database = {
           status?: Status
           priority?: Priority
           due_date?: string | null
+          position?: number
         }
         Update: {
           title?: string
           status?: Status
           priority?: Priority
           due_date?: string | null
+          position?: number
         }
         Relationships: []
       }

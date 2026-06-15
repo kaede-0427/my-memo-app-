@@ -5,25 +5,148 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
+import {
+  DndContext, closestCenter, PointerSensor, KeyboardSensor,
+  useSensor, useSensors, type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext, sortableKeyboardCoordinates, useSortable,
+  verticalListSortingStrategy, arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { supabase } from '@/lib/supabase'
-import type { Project, Memo, Task, Priority } from '@/types/database'
-import TaskItem from '@/components/TaskItem'
+import type { Project, Memo, Task, Priority, Status } from '@/types/database'
+import PriorityBadge from '@/components/PriorityBadge'
+import StatusBadge from '@/components/StatusBadge'
 import AddTaskForm from '@/components/AddTaskForm'
 import IconUploader from '@/components/IconUploader'
 
 type MainTab = 'memo' | 'tasks'
 
-const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 }
+const STATUS_OPTIONS: { value: Status; label: string }[] = [
+  { value: 'todo', label: '未着手' },
+  { value: 'in_progress', label: '進行中' },
+  { value: 'on_hold', label: '保留' },
+  { value: 'review', label: 'レビュー待ち' },
+  { value: 'done', label: '完了' },
+]
 
-function sortTasks(tasks: Task[]): Task[] {
-  return [...tasks].sort((a, b) => {
-    const pd = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]
-    if (pd !== 0) return pd
-    if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date)
-    if (a.due_date) return -1
-    if (b.due_date) return 1
-    return a.created_at.localeCompare(b.created_at)
-  })
+const PRIORITY_OPTIONS: { value: Priority; label: string }[] = [
+  { value: 'high', label: '高' },
+  { value: 'medium', label: '中' },
+  { value: 'low', label: '低' },
+]
+
+function GripIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-gray-300">
+      <circle cx="4" cy="3" r="1.2" fill="currentColor"/>
+      <circle cx="4" cy="7" r="1.2" fill="currentColor"/>
+      <circle cx="4" cy="11" r="1.2" fill="currentColor"/>
+      <circle cx="10" cy="3" r="1.2" fill="currentColor"/>
+      <circle cx="10" cy="7" r="1.2" fill="currentColor"/>
+      <circle cx="10" cy="11" r="1.2" fill="currentColor"/>
+    </svg>
+  )
+}
+
+function SortableTask({
+  task, onUpdate, onDelete,
+}: {
+  task: Task
+  onUpdate: (t: Task) => void
+  onDelete: (id: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(task.title)
+  const [status, setStatus] = useState<Status>(task.status)
+  const [priority, setPriority] = useState<Priority>(task.priority)
+  const [dueDate, setDueDate] = useState(task.due_date ?? '')
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }
+
+  async function save() {
+    const { data, error } = await supabase
+      .from('tasks').update({ title, status, priority, due_date: dueDate || null })
+      .eq('id', task.id).select().single()
+    if (!error && data) { onUpdate(data); setEditing(false) }
+  }
+
+  async function remove() {
+    if (!confirm('このタスクを削除しますか？')) return
+    await supabase.from('tasks').delete().eq('id', task.id)
+    onDelete(task.id)
+  }
+
+  async function toggleDone() {
+    const next: Status = task.status === 'done' ? 'todo' : 'done'
+    const { data, error } = await supabase
+      .from('tasks').update({ status: next }).eq('id', task.id).select().single()
+    if (!error && data) onUpdate(data)
+  }
+
+  if (editing) {
+    return (
+      <div ref={setNodeRef} style={style} className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
+        <input
+          autoFocus
+          className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+        />
+        <div className="flex flex-wrap gap-2">
+          <select className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
+            value={status} onChange={e => setStatus(e.target.value as Status)}>
+            {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <select className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
+            value={priority} onChange={e => setPriority(e.target.value as Priority)}>
+            {PRIORITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <input type="date" className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
+            value={dueDate} onChange={e => setDueDate(e.target.value)} />
+        </div>
+        <div className="flex gap-2">
+          <button onClick={save} className="text-xs bg-gray-800 text-white px-3 py-1 rounded hover:bg-gray-700">保存</button>
+          <button onClick={() => setEditing(false)} className="text-xs text-gray-500 px-3 py-1 rounded hover:bg-gray-200">キャンセル</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={setNodeRef} style={style}
+      className={`flex items-start gap-2 border border-gray-100 rounded-lg px-3 py-2.5 group hover:border-gray-300 transition-colors bg-white ${task.status === 'done' ? 'opacity-50' : ''}`}>
+      <button {...attributes} {...listeners}
+        className="mt-1 cursor-grab active:cursor-grabbing flex-shrink-0 touch-none" tabIndex={-1}>
+        <GripIcon />
+      </button>
+      <button onClick={toggleDone}
+        className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
+          task.status === 'done' ? 'bg-gray-800 border-gray-800' : 'border-gray-300 hover:border-gray-500'
+        }`}>
+        {task.status === 'done' && (
+          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        )}
+      </button>
+      <div className="flex-1 min-w-0">
+        <p className={`text-sm ${task.status === 'done' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.title}</p>
+        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+          <PriorityBadge priority={task.priority} />
+          <StatusBadge status={task.status} />
+          {task.due_date && <span className="text-xs text-gray-400">{task.due_date}</span>}
+        </div>
+      </div>
+      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <button onClick={() => setEditing(true)} className="text-xs text-gray-400 hover:text-gray-700 p-1">編集</button>
+        <button onClick={remove} className="text-xs text-gray-400 hover:text-red-500 p-1">削除</button>
+      </div>
+    </div>
+  )
 }
 
 export default function ProjectPage() {
@@ -48,12 +171,17 @@ export default function ProjectPage() {
   const [renameMemoValue, setRenameMemoValue] = useState('')
   const renameMemoRef = useRef<HTMLInputElement>(null)
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
   useEffect(() => {
     async function load() {
       const [projectRes, memosRes, tasksRes] = await Promise.all([
         supabase.from('projects').select('*').eq('id', id).single(),
         supabase.from('memos').select('*').eq('project_id', id).order('updated_at', { ascending: true }),
-        supabase.from('tasks').select('*').eq('project_id', id),
+        supabase.from('tasks').select('*').eq('project_id', id).order('position', { ascending: true }),
       ])
       if (projectRes.error || !projectRes.data) { router.push('/'); return }
       setProject(projectRes.data)
@@ -64,7 +192,7 @@ export default function ProjectPage() {
         setActiveMemoId(loadedMemos[0].id)
         setMemoContent(loadedMemos[0].content)
       }
-      if (tasksRes.data) setTasks(sortTasks(tasksRes.data))
+      if (tasksRes.data) setTasks(tasksRes.data)
       setLoading(false)
     }
     load()
@@ -101,12 +229,22 @@ export default function ProjectPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [editingMemo, saveMemo])
 
+  async function handleTaskDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = tasks.findIndex(t => t.id === active.id)
+    const newIndex = tasks.findIndex(t => t.id === over.id)
+    const reordered = arrayMove(tasks, oldIndex, newIndex)
+    setTasks(reordered)
+    await Promise.all(reordered.map((t, i) =>
+      supabase.from('tasks').update({ position: i }).eq('id', t.id)
+    ))
+  }
+
   async function addMemoTab() {
     const { data, error } = await supabase
-      .from('memos')
-      .insert({ project_id: id, title: `ページ${memos.length + 1}`, content: '' })
-      .select()
-      .single()
+      .from('memos').insert({ project_id: id, title: `ページ${memos.length + 1}`, content: '' })
+      .select().single()
     if (!error && data) {
       setMemos(prev => [...prev, data])
       setActiveMemoId(data.id)
@@ -149,13 +287,13 @@ export default function ProjectPage() {
   }
 
   function handleTaskUpdate(updated: Task) {
-    setTasks(prev => sortTasks(prev.map(t => t.id === updated.id ? updated : t)))
+    setTasks(prev => prev.map(t => t.id === updated.id ? updated : t))
   }
   function handleTaskDelete(taskId: string) {
     setTasks(prev => prev.filter(t => t.id !== taskId))
   }
   function handleTaskAdd(task: Task) {
-    setTasks(prev => sortTasks([...prev, task]))
+    setTasks(prev => [...prev, task])
   }
 
   const doneTasks = tasks.filter(t => t.status === 'done')
@@ -180,30 +318,18 @@ export default function ProjectPage() {
             onChange={updateProjectIcon}
           />
           {editingName ? (
-            <input
-              ref={nameRef}
-              value={nameValue}
+            <input ref={nameRef} value={nameValue}
               onChange={e => setNameValue(e.target.value)}
               onBlur={saveProjectName}
-              onKeyDown={e => {
-                if (e.key === 'Enter') saveProjectName()
-                if (e.key === 'Escape') setEditingName(false)
-              }}
+              onKeyDown={e => { if (e.key === 'Enter') saveProjectName(); if (e.key === 'Escape') setEditingName(false) }}
               className="text-2xl font-bold text-gray-900 border-b-2 border-gray-400 bg-transparent focus:outline-none flex-1"
             />
           ) : (
-            <h1
-              className="text-2xl font-bold text-gray-900 cursor-pointer group flex items-center gap-2"
-              onDoubleClick={() => setEditingName(true)}
-              title="ダブルクリックで名前を変更"
-            >
+            <h1 className="text-2xl font-bold text-gray-900 cursor-pointer group flex items-center gap-2"
+              onDoubleClick={() => setEditingName(true)}>
               {project?.name}
-              <span
-                className="text-sm font-normal text-gray-300 group-hover:text-gray-400 transition-colors"
-                onClick={() => setEditingName(true)}
-              >
-                編集
-              </span>
+              <span className="text-sm font-normal text-gray-300 group-hover:text-gray-400 transition-colors"
+                onClick={() => setEditingName(true)}>編集</span>
             </h1>
           )}
         </div>
@@ -212,15 +338,10 @@ export default function ProjectPage() {
       {/* メインタブ */}
       <div className="flex border-b border-gray-200">
         {(['memo', 'tasks'] as MainTab[]).map(t => (
-          <button
-            key={t}
-            onClick={() => setMainTab(t)}
+          <button key={t} onClick={() => setMainTab(t)}
             className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              mainTab === t
-                ? 'border-gray-900 text-gray-900'
-                : 'border-transparent text-gray-400 hover:text-gray-600'
-            }`}
-          >
+              mainTab === t ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
+            }`}>
             {t === 'memo' ? 'メモ' : `タスク（${tasks.length}）`}
           </button>
         ))}
@@ -232,50 +353,41 @@ export default function ProjectPage() {
           {/* メモサブタブ */}
           <div className="flex items-center border-b border-gray-100 mb-4 overflow-x-auto">
             {memos.map(memo => (
-              <div
-                key={memo.id}
+              <div key={memo.id}
                 className={`group flex items-center gap-1 flex-shrink-0 border-b-2 -mb-px transition-colors ${
-                  activeMemoId === memo.id
-                    ? 'border-gray-500 text-gray-800'
-                    : 'border-transparent text-gray-400 hover:text-gray-600'
-                }`}
-              >
+                  activeMemoId === memo.id ? 'border-gray-500 text-gray-800' : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}>
                 {renamingMemoId === memo.id ? (
-                  <input
-                    ref={renameMemoRef}
-                    value={renameMemoValue}
+                  <input ref={renameMemoRef} value={renameMemoValue}
                     onChange={e => setRenameMemoValue(e.target.value)}
                     onBlur={() => saveMemoTitle(memo.id)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') saveMemoTitle(memo.id)
-                      if (e.key === 'Escape') setRenamingMemoId(null)
-                    }}
+                    onKeyDown={e => { if (e.key === 'Enter') saveMemoTitle(memo.id); if (e.key === 'Escape') setRenamingMemoId(null) }}
                     className="text-sm border-b border-gray-400 bg-transparent focus:outline-none w-24 px-1 py-2"
                   />
                 ) : (
-                  <button
-                    onClick={() => switchMemo(memo)}
-                    onDoubleClick={() => { setRenamingMemoId(memo.id); setRenameMemoValue(memo.title) }}
-                    className="text-sm px-3 py-2.5 whitespace-nowrap"
-                    title="ダブルクリックで名前変更"
-                  >
+                  <button onClick={() => switchMemo(memo)}
+                    className="text-sm px-2 py-2.5 whitespace-nowrap">
                     {memo.title}
                   </button>
                 )}
+                {/* タブ名変更ボタン */}
+                <button
+                  onClick={() => { setRenamingMemoId(memo.id); setRenameMemoValue(memo.title) }}
+                  className="text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 text-xs transition-opacity px-0.5"
+                  title="名前を変更"
+                >
+                  ✎
+                </button>
                 {memos.length > 1 && (
-                  <button
-                    onClick={() => deleteMemoTab(memo.id)}
-                    className="text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 pr-1 text-xs transition-opacity"
-                  >
+                  <button onClick={() => deleteMemoTab(memo.id)}
+                    className="text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 pr-1 text-xs transition-opacity">
                     ×
                   </button>
                 )}
               </div>
             ))}
-            <button
-              onClick={addMemoTab}
-              className="text-gray-300 hover:text-gray-600 px-3 py-2 text-sm flex-shrink-0 transition-colors"
-            >
+            <button onClick={addMemoTab}
+              className="text-gray-300 hover:text-gray-600 px-3 py-2 text-sm flex-shrink-0 transition-colors">
               + 追加
             </button>
           </div>
@@ -283,38 +395,29 @@ export default function ProjectPage() {
           {/* メモ本文 */}
           {editingMemo ? (
             <div className="space-y-3">
-              <textarea
-                autoFocus
-                value={memoContent}
+              <textarea autoFocus value={memoContent}
                 onChange={e => setMemoContent(e.target.value)}
                 className="w-full min-h-[400px] border border-gray-300 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-400 resize-y"
-                placeholder="マークダウンで書けます&#10;&#10;## 見出し&#10;- リスト&#10;**太字**"
+                placeholder="自由に書けます（Enterで改行）"
               />
               <div className="flex gap-2 items-center">
-                <button
-                  onClick={saveMemo}
-                  disabled={saving}
-                  className="text-sm bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-40"
-                >
+                <button onClick={saveMemo} disabled={saving}
+                  className="text-sm bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-40">
                   {saving ? '保存中...' : '保存'}
                 </button>
-                <button
-                  onClick={() => { setEditingMemo(false); setMemoContent(activeMemo?.content ?? '') }}
-                  className="text-sm text-gray-500 px-3 py-2 rounded-lg hover:bg-gray-200"
-                >
+                <button onClick={() => { setEditingMemo(false); setMemoContent(activeMemo?.content ?? '') }}
+                  className="text-sm text-gray-500 px-3 py-2 rounded-lg hover:bg-gray-200">
                   キャンセル
                 </button>
                 <span className="text-xs text-gray-400">Ctrl+S でも保存</span>
               </div>
             </div>
           ) : (
-            <div
-              onClick={() => setEditingMemo(true)}
-              className="min-h-[200px] cursor-text border border-transparent hover:border-gray-200 rounded-lg px-1 py-1 transition-colors"
-            >
+            <div onClick={() => setEditingMemo(true)}
+              className="min-h-[200px] cursor-text border border-transparent hover:border-gray-200 rounded-lg px-1 py-1 transition-colors">
               {memoContent ? (
                 <div className="prose text-sm">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{memoContent}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{memoContent}</ReactMarkdown>
                 </div>
               ) : (
                 <p className="text-gray-300 text-sm">クリックしてメモを書く...</p>
@@ -327,10 +430,16 @@ export default function ProjectPage() {
       {/* タスクタブ */}
       {mainTab === 'tasks' && (
         <div className="space-y-2 mt-6">
-          {activeTasks.map(task => (
-            <TaskItem key={task.id} task={task} onUpdate={handleTaskUpdate} onDelete={handleTaskDelete} />
-          ))}
-          <AddTaskForm projectId={id} onAdd={handleTaskAdd} />
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTaskDragEnd}>
+            <SortableContext items={activeTasks.map(t => t.id)} strategy={verticalListSortingStrategy}>
+              {activeTasks.map(task => (
+                <SortableTask key={task.id} task={task} onUpdate={handleTaskUpdate} onDelete={handleTaskDelete} />
+              ))}
+            </SortableContext>
+          </DndContext>
+
+          <AddTaskForm projectId={id} nextPosition={tasks.length} onAdd={handleTaskAdd} />
+
           {doneTasks.length > 0 && (
             <details className="mt-4">
               <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none py-2">
@@ -338,11 +447,12 @@ export default function ProjectPage() {
               </summary>
               <div className="space-y-2 mt-2">
                 {doneTasks.map(task => (
-                  <TaskItem key={task.id} task={task} onUpdate={handleTaskUpdate} onDelete={handleTaskDelete} />
+                  <SortableTask key={task.id} task={task} onUpdate={handleTaskUpdate} onDelete={handleTaskDelete} />
                 ))}
               </div>
             </details>
           )}
+
           {tasks.length === 0 && (
             <p className="text-center text-gray-300 text-sm py-8">タスクがありません</p>
           )}

@@ -6,10 +6,11 @@ import type { Task, Priority } from '@/types/database'
 
 interface Props {
   projectId: string
+  nextPosition: number
   onAdd: (task: Task) => void
 }
 
-export default function AddTaskForm({ projectId, onAdd }: Props) {
+export default function AddTaskForm({ projectId, nextPosition, onAdd }: Props) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState<Priority>('medium')
@@ -22,7 +23,7 @@ export default function AddTaskForm({ projectId, onAdd }: Props) {
     setLoading(true)
     const { data, error } = await supabase
       .from('tasks')
-      .insert({ project_id: projectId, title: title.trim(), priority, due_date: dueDate || null })
+      .insert({ project_id: projectId, title: title.trim(), priority, due_date: dueDate || null, position: nextPosition })
       .select()
       .single()
     setLoading(false)
