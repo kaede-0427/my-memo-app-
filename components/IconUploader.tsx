@@ -25,12 +25,8 @@ export default function IconUploader({ projectId, iconUrl, projectName, onChange
     const { error } = await supabase.storage
       .from('project-icons')
       .upload(path, file, { upsert: true })
-    if (error) {
-      console.error('Upload error:', error)
-      alert('アップロードに失敗しました: ' + error.message)
-    } else {
+    if (!error) {
       const { data } = supabase.storage.from('project-icons').getPublicUrl(path)
-      console.log('Upload success, URL:', data.publicUrl)
       onChange(data.publicUrl)
     }
     setUploading(false)
