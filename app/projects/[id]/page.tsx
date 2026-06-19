@@ -261,13 +261,17 @@ export default function ProjectPage() {
     async function load() {
       const [projectRes, memosRes, tasksRes] = await Promise.all([
         supabase.from('projects').select('*').eq('id', id).single(),
-        supabase.from('memos').select('*').eq('project_id', id).order('position', { ascending: true }),
+        supabase.from('memos').select('*').eq('project_id', id).order('updated_at', { ascending: true }),
         supabase.from('tasks').select('*').eq('project_id', id).order('position', { ascending: true }),
       ])
       if (projectRes.error || !projectRes.data) { router.push('/'); return }
       setProject(projectRes.data)
       setNameValue(projectRes.data.name)
-      const loadedMemos: Memo[] = memosRes.data ?? []
+      // position カラムが存在する場合はそれで並び替え、なければ updated_at 順をそのまま使う
+      let loadedMemos: Memo[] = memosRes.data ?? []
+      if (loadedMemos.length > 0 && loadedMemos[0].position !== undefined) {
+        loadedMemos = [...loadedMemos].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      }
       setMemos(loadedMemos)
       if (loadedMemos.length > 0) {
         setActiveMemoId(loadedMemos[0].id)
@@ -451,8 +455,8 @@ export default function ProjectPage() {
       <div className="flex border-b border-gray-200">
         {([
           { key: 'memo', label: 'メモ' },
-          { key: 'mindmap', label: 'マインドマップ' },
           { key: 'tasks', label: `タスク（${tasks.length}）` },
+          { key: 'mindmap', label: 'マインドマップ' },
         ] as { key: MainTab; label: string }[]).map(t => (
           <button key={t.key} onClick={() => setMainTab(t.key)}
             className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
