@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { Task, Priority } from '@/types/database'
+import type { Task, Priority, Status } from '@/types/database'
 
 interface Props {
   projectId: string
@@ -10,10 +10,19 @@ interface Props {
   onAdd: (task: Task) => void
 }
 
+const STATUS_OPTIONS: { value: Status; label: string }[] = [
+  { value: 'todo', label: '未着手' },
+  { value: 'in_progress', label: '進行中' },
+  { value: 'on_hold', label: '保留' },
+  { value: 'review', label: 'レビュー待ち' },
+  { value: 'done', label: '完了' },
+]
+
 export default function AddTaskForm({ projectId, nextPosition, onAdd }: Props) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState<Priority>('medium')
+  const [status, setStatus] = useState<Status>('todo')
   const [dueDate, setDueDate] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -23,7 +32,7 @@ export default function AddTaskForm({ projectId, nextPosition, onAdd }: Props) {
     setLoading(true)
     const { data, error } = await supabase
       .from('tasks')
-      .insert({ project_id: projectId, title: title.trim(), priority, due_date: dueDate || null, position: nextPosition })
+      .insert({ project_id: projectId, title: title.trim(), priority, status, due_date: dueDate || null, position: nextPosition })
       .select()
       .single()
     setLoading(false)
@@ -31,6 +40,7 @@ export default function AddTaskForm({ projectId, nextPosition, onAdd }: Props) {
       onAdd(data)
       setTitle('')
       setPriority('medium')
+      setStatus('todo')
       setDueDate('')
       setOpen(false)
     }
@@ -57,6 +67,13 @@ export default function AddTaskForm({ projectId, nextPosition, onAdd }: Props) {
         onChange={e => setTitle(e.target.value)}
       />
       <div className="flex flex-wrap gap-2">
+        <select
+          className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
+          value={status}
+          onChange={e => setStatus(e.target.value as Status)}
+        >
+          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
         <select
           className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
           value={priority}

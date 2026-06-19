@@ -1,18 +1,20 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, memo } from 'react'
+import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+import rehypeRaw from 'rehype-raw'
 import {
-  DndContext, closestCenter, PointerSensor, KeyboardSensor,
+  DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, type DragEndEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext, sortableKeyboardCoordinates, useSortable,
-  verticalListSortingStrategy, arrayMove,
+  verticalListSortingStrategy, horizontalListSortingStrategy, arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { supabase } from '@/lib/supabase'
@@ -22,7 +24,16 @@ import StatusBadge from '@/components/StatusBadge'
 import AddTaskForm from '@/components/AddTaskForm'
 import IconUploader from '@/components/IconUploader'
 
-type MainTab = 'memo' | 'tasks'
+const MindMapEditor = dynamic(() => import('@/components/MindMapEditor'), {
+  ssr: false,
+  loading: () => (
+    <div className="mt-4 h-[520px] border border-gray-200 rounded-lg flex items-center justify-center text-gray-400 text-sm">
+      マインドマップを読み込み中...
+    </div>
+  ),
+})
+
+type MainTab = 'memo' | 'mindmap' | 'tasks'
 
 const STATUS_OPTIONS: { value: Status; label: string }[] = [
   { value: 'todo', label: '未着手' },
@@ -38,9 +49,18 @@ const PRIORITY_OPTIONS: { value: Priority; label: string }[] = [
   { value: 'low', label: '低' },
 ]
 
-function GripIcon() {
+const TEXT_COLORS = [
+  { label: 'デフォルト', value: '', cls: 'bg-gray-800' },
+  { label: '赤', value: '#e53e3e', cls: 'bg-red-500' },
+  { label: '青', value: '#3182ce', cls: 'bg-blue-500' },
+  { label: '緑', value: '#38a169', cls: 'bg-green-600' },
+  { label: 'オレンジ', value: '#dd6b20', cls: 'bg-orange-500' },
+  { label: '紫', value: '#805ad5', cls: 'bg-purple-500' },
+]
+
+function GripIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-gray-300">
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" className="text-gray-300">
       <circle cx="4" cy="3" r="1.2" fill="currentColor"/>
       <circle cx="4" cy="7" r="1.2" fill="currentColor"/>
       <circle cx="4" cy="11" r="1.2" fill="currentColor"/>
@@ -51,7 +71,65 @@ function GripIcon() {
   )
 }
 
-function SortableTask({
+// ---- Sortable Memo Tab ----
+interface SortableMemoTabProps {
+  memo: Memo
+  isActive: boolean
+  isRenaming: boolean
+  renameRef: React.RefObject<HTMLInputElement | null>
+  renameValue: string
+  memoCount: number
+  onSelect: () => void
+  onRenameStart: () => void
+  onRenameSave: (id: string) => void
+  onRenameChange: (v: string) => void
+  onRenameKeyDown: (e: React.KeyboardEvent, id: string) => void
+  onDelete: (id: string) => void
+}
+
+function SortableMemoTab({
+  memo, isActive, isRenaming, renameRef, renameValue, memoCount,
+  onSelect, onRenameStart, onRenameSave, onRenameChange, onRenameKeyDown, onDelete,
+}: SortableMemoTabProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: memo.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }
+
+  return (
+    <div ref={setNodeRef} style={style}
+      className={`group flex items-center gap-0.5 flex-shrink-0 border-b-2 -mb-px transition-colors ${
+        isActive ? 'border-gray-600 text-gray-800' : 'border-transparent text-gray-400 hover:text-gray-600'
+      }`}>
+      <button {...attributes} {...listeners}
+        className="cursor-grab active:cursor-grabbing p-1 opacity-0 group-hover:opacity-100 touch-none transition-opacity flex-shrink-0"
+        tabIndex={-1}>
+        <GripIcon size={10} />
+      </button>
+      {isRenaming ? (
+        <input ref={renameRef} value={renameValue}
+          onChange={e => onRenameChange(e.target.value)}
+          onBlur={() => onRenameSave(memo.id)}
+          onKeyDown={e => onRenameKeyDown(e, memo.id)}
+          className="text-sm border-b border-gray-400 bg-transparent focus:outline-none w-20 px-1 py-2"
+        />
+      ) : (
+        <button onClick={onSelect} className="text-sm px-1.5 py-2.5 whitespace-nowrap">
+          {memo.title}
+        </button>
+      )}
+      <button onClick={onRenameStart}
+        className="text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 text-xs transition-opacity px-0.5"
+        title="名前を変更">✎</button>
+      {memoCount > 1 && (
+        <button onClick={() => onDelete(memo.id)}
+          className="text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 text-xs transition-opacity pr-1">×</button>
+      )}
+    </div>
+  )
+}
+
+// ---- Sortable Task ----
+const SortableTask = memo(function SortableTask({
   task, onUpdate, onDelete,
 }: {
   task: Task
@@ -64,7 +142,8 @@ function SortableTask({
   const [priority, setPriority] = useState<Priority>(task.priority)
   const [dueDate, setDueDate] = useState(task.due_date ?? '')
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: task.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }
 
   async function save() {
@@ -90,11 +169,9 @@ function SortableTask({
   if (editing) {
     return (
       <div ref={setNodeRef} style={style} className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
-        <input
-          autoFocus
+        <input autoFocus
           className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
-          value={title}
-          onChange={e => setTitle(e.target.value)}
+          value={title} onChange={e => setTitle(e.target.value)}
         />
         <div className="flex flex-wrap gap-2">
           <select className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
@@ -129,7 +206,7 @@ function SortableTask({
         }`}>
         {task.status === 'done' && (
           <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
           </svg>
         )}
       </button>
@@ -147,8 +224,9 @@ function SortableTask({
       </div>
     </div>
   )
-}
+})
 
+// ---- Main Page ----
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
@@ -171,8 +249,11 @@ export default function ProjectPage() {
   const [renameMemoValue, setRenameMemoValue] = useState('')
   const renameMemoRef = useRef<HTMLInputElement>(null)
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
@@ -180,7 +261,7 @@ export default function ProjectPage() {
     async function load() {
       const [projectRes, memosRes, tasksRes] = await Promise.all([
         supabase.from('projects').select('*').eq('id', id).single(),
-        supabase.from('memos').select('*').eq('project_id', id).order('updated_at', { ascending: true }),
+        supabase.from('memos').select('*').eq('project_id', id).order('position', { ascending: true }),
         supabase.from('tasks').select('*').eq('project_id', id).order('position', { ascending: true }),
       ])
       if (projectRes.error || !projectRes.data) { router.push('/'); return }
@@ -229,6 +310,24 @@ export default function ProjectPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [editingMemo, saveMemo])
 
+  function insertColor(color: string) {
+    const ta = textareaRef.current
+    if (!ta) return
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const selected = memoContent.substring(start, end)
+    const insertion = color
+      ? `<span style="color:${color}">${selected || 'テキスト'}</span>`
+      : selected
+    const newContent = memoContent.substring(0, start) + insertion + memoContent.substring(end)
+    setMemoContent(newContent)
+    setTimeout(() => {
+      ta.focus()
+      ta.selectionStart = start + insertion.length
+      ta.selectionEnd = start + insertion.length
+    }, 0)
+  }
+
   async function handleTaskDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (!over || active.id === over.id) return
@@ -241,9 +340,22 @@ export default function ProjectPage() {
     ))
   }
 
+  async function handleMemoTabDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = memos.findIndex(m => m.id === active.id)
+    const newIndex = memos.findIndex(m => m.id === over.id)
+    const reordered = arrayMove(memos, oldIndex, newIndex)
+    setMemos(reordered)
+    await Promise.all(reordered.map((m, i) =>
+      supabase.from('memos').update({ position: i }).eq('id', m.id)
+    ))
+  }
+
   async function addMemoTab() {
     const { data, error } = await supabase
-      .from('memos').insert({ project_id: id, title: `ページ${memos.length + 1}`, content: '' })
+      .from('memos')
+      .insert({ project_id: id, title: `ページ${memos.length + 1}`, content: '', position: memos.length })
       .select().single()
     if (!error && data) {
       setMemos(prev => [...prev, data])
@@ -286,15 +398,15 @@ export default function ProjectPage() {
     setProject(prev => prev ? { ...prev, icon: url } : prev)
   }
 
-  function handleTaskUpdate(updated: Task) {
+  const handleTaskUpdate = useCallback((updated: Task) => {
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t))
-  }
-  function handleTaskDelete(taskId: string) {
+  }, [])
+  const handleTaskDelete = useCallback((taskId: string) => {
     setTasks(prev => prev.filter(t => t.id !== taskId))
-  }
-  function handleTaskAdd(task: Task) {
+  }, [])
+  const handleTaskAdd = useCallback((task: Task) => {
     setTasks(prev => [...prev, task])
-  }
+  }, [])
 
   const doneTasks = tasks.filter(t => t.status === 'done')
   const activeTasks = tasks.filter(t => t.status !== 'done')
@@ -325,7 +437,7 @@ export default function ProjectPage() {
               className="text-2xl font-bold text-gray-900 border-b-2 border-gray-400 bg-transparent focus:outline-none flex-1"
             />
           ) : (
-            <h1 className="text-2xl font-bold text-gray-900 cursor-pointer group flex items-center gap-2"
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2 group cursor-pointer"
               onDoubleClick={() => setEditingName(true)}>
               {project?.name}
               <span className="text-sm font-normal text-gray-300 group-hover:text-gray-400 transition-colors"
@@ -337,12 +449,16 @@ export default function ProjectPage() {
 
       {/* メインタブ */}
       <div className="flex border-b border-gray-200">
-        {(['memo', 'tasks'] as MainTab[]).map(t => (
-          <button key={t} onClick={() => setMainTab(t)}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              mainTab === t ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
+        {([
+          { key: 'memo', label: 'メモ' },
+          { key: 'mindmap', label: 'マインドマップ' },
+          { key: 'tasks', label: `タスク（${tasks.length}）` },
+        ] as { key: MainTab; label: string }[]).map(t => (
+          <button key={t.key} onClick={() => setMainTab(t.key)}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+              mainTab === t.key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
             }`}>
-            {t === 'memo' ? 'メモ' : `タスク（${tasks.length}）`}
+            {t.label}
           </button>
         ))}
       </div>
@@ -350,52 +466,54 @@ export default function ProjectPage() {
       {/* メモタブ */}
       {mainTab === 'memo' && (
         <div>
-          {/* メモサブタブ */}
+          {/* メモサブタブ（ドラッグ並び替え対応） */}
           <div className="flex items-center border-b border-gray-100 mb-4 overflow-x-auto">
-            {memos.map(memo => (
-              <div key={memo.id}
-                className={`group flex items-center gap-1 flex-shrink-0 border-b-2 -mb-px transition-colors ${
-                  activeMemoId === memo.id ? 'border-gray-500 text-gray-800' : 'border-transparent text-gray-400 hover:text-gray-600'
-                }`}>
-                {renamingMemoId === memo.id ? (
-                  <input ref={renameMemoRef} value={renameMemoValue}
-                    onChange={e => setRenameMemoValue(e.target.value)}
-                    onBlur={() => saveMemoTitle(memo.id)}
-                    onKeyDown={e => { if (e.key === 'Enter') saveMemoTitle(memo.id); if (e.key === 'Escape') setRenamingMemoId(null) }}
-                    className="text-sm border-b border-gray-400 bg-transparent focus:outline-none w-24 px-1 py-2"
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleMemoTabDragEnd}>
+              <SortableContext items={memos.map(m => m.id)} strategy={horizontalListSortingStrategy}>
+                {memos.map(memo => (
+                  <SortableMemoTab
+                    key={memo.id}
+                    memo={memo}
+                    isActive={activeMemoId === memo.id}
+                    isRenaming={renamingMemoId === memo.id}
+                    renameRef={renameMemoRef}
+                    renameValue={renameMemoValue}
+                    memoCount={memos.length}
+                    onSelect={() => switchMemo(memo)}
+                    onRenameStart={() => { setRenamingMemoId(memo.id); setRenameMemoValue(memo.title) }}
+                    onRenameSave={saveMemoTitle}
+                    onRenameChange={setRenameMemoValue}
+                    onRenameKeyDown={(e, mid) => { if (e.key === 'Enter') saveMemoTitle(mid); if (e.key === 'Escape') setRenamingMemoId(null) }}
+                    onDelete={deleteMemoTab}
                   />
-                ) : (
-                  <button onClick={() => switchMemo(memo)}
-                    className="text-sm px-2 py-2.5 whitespace-nowrap">
-                    {memo.title}
-                  </button>
-                )}
-                {/* タブ名変更ボタン */}
-                <button
-                  onClick={() => { setRenamingMemoId(memo.id); setRenameMemoValue(memo.title) }}
-                  className="text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 text-xs transition-opacity px-0.5"
-                  title="名前を変更"
-                >
-                  ✎
-                </button>
-                {memos.length > 1 && (
-                  <button onClick={() => deleteMemoTab(memo.id)}
-                    className="text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 pr-1 text-xs transition-opacity">
-                    ×
-                  </button>
-                )}
-              </div>
-            ))}
+                ))}
+              </SortableContext>
+            </DndContext>
             <button onClick={addMemoTab}
               className="text-gray-300 hover:text-gray-600 px-3 py-2 text-sm flex-shrink-0 transition-colors">
               + 追加
             </button>
           </div>
 
+          {/* 文字色ツールバー（編集中のみ表示） */}
+          {editingMemo && (
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className="text-xs text-gray-400">文字色：</span>
+              {TEXT_COLORS.map(c => (
+                <button key={c.value}
+                  onClick={() => insertColor(c.value)}
+                  title={c.label}
+                  className={`w-5 h-5 rounded-full ${c.cls} hover:scale-110 transition-transform flex-shrink-0 border border-white shadow-sm`}
+                />
+              ))}
+              <span className="text-xs text-gray-300">（文字を選択してから色ボタンをクリック）</span>
+            </div>
+          )}
+
           {/* メモ本文 */}
           {editingMemo ? (
             <div className="space-y-3">
-              <textarea autoFocus value={memoContent}
+              <textarea ref={textareaRef} autoFocus value={memoContent}
                 onChange={e => setMemoContent(e.target.value)}
                 className="w-full min-h-[400px] border border-gray-300 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-400 resize-y"
                 placeholder="自由に書けます（Enterで改行）"
@@ -416,8 +534,10 @@ export default function ProjectPage() {
             <div onClick={() => setEditingMemo(true)}
               className="min-h-[200px] cursor-text border border-transparent hover:border-gray-200 rounded-lg px-1 py-1 transition-colors">
               {memoContent ? (
-                <div className="prose text-sm">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{memoContent}</ReactMarkdown>
+                <div className="prose text-sm max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw]}>
+                    {memoContent}
+                  </ReactMarkdown>
                 </div>
               ) : (
                 <p className="text-gray-300 text-sm">クリックしてメモを書く...</p>
@@ -425,6 +545,11 @@ export default function ProjectPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* マインドマップタブ */}
+      {mainTab === 'mindmap' && (
+        <MindMapEditor projectId={id} />
       )}
 
       {/* タスクタブ */}

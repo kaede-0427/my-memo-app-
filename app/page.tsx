@@ -83,11 +83,8 @@ function SortableProject({
             className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
           />
         ) : (
-          <Link href={`/projects/${project.id}`} className="flex-1 min-w-0">
+          <Link href={`/projects/${project.id}`} className="flex-1 min-w-0 flex items-center py-1">
             <p className="font-medium text-gray-900 truncate">{project.name}</p>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {new Date(project.created_at).toLocaleDateString('ja-JP')}
-            </p>
           </Link>
         )}
 

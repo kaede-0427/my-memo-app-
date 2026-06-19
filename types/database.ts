@@ -14,6 +14,28 @@ export interface Memo {
   project_id: string
   title: string
   content: string
+  position: number
+  updated_at: string
+}
+
+export interface MindMapNode {
+  id: string
+  position: { x: number; y: number }
+  data: { label: string }
+  type?: string
+}
+
+export interface MindMapEdge {
+  id: string
+  source: string
+  target: string
+}
+
+export interface MindMap {
+  id: string
+  project_id: string
+  nodes: MindMapNode[]
+  edges: MindMapEdge[]
   updated_at: string
 }
 
