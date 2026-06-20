@@ -4,10 +4,6 @@ import { useEffect, useState, useCallback, useRef, memo } from 'react'
 import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkBreaks from 'remark-breaks'
-import rehypeRaw from 'rehype-raw'
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, type DragEndEvent,
@@ -49,14 +45,21 @@ const PRIORITY_OPTIONS: { value: Priority; label: string }[] = [
   { value: 'low', label: '低' },
 ]
 
+// テキスト色（黒・赤・青のみ）
 const TEXT_COLORS = [
-  { label: 'デフォルト', value: '', cls: 'bg-gray-800' },
+  { label: '黒（デフォルト）', value: '#000000', cls: 'bg-gray-900' },
   { label: '赤', value: '#e53e3e', cls: 'bg-red-500' },
   { label: '青', value: '#3182ce', cls: 'bg-blue-500' },
-  { label: '緑', value: '#38a169', cls: 'bg-green-600' },
-  { label: 'オレンジ', value: '#dd6b20', cls: 'bg-orange-500' },
-  { label: '紫', value: '#805ad5', cls: 'bg-purple-500' },
 ]
+
+// HTMLとプレーンテキストどちらも安全に表示
+function renderContent(content: string): string {
+  if (!content) return ''
+  // HTMLタグが含まれていればそのまま返す
+  if (/<[a-z][\s\S]*>/i.test(content)) return content
+  // プレーンテキストは改行を <br> に変換
+  return content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+}
 
 function GripIcon({ size = 14 }: { size?: number }) {
   return (
@@ -249,7 +252,7 @@ export default function ProjectPage() {
   const [renameMemoValue, setRenameMemoValue] = useState('')
   const renameMemoRef = useRef<HTMLInputElement>(null)
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editDivRef = useRef<HTMLDivElement>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -296,9 +299,11 @@ export default function ProjectPage() {
 
   const saveMemo = useCallback(async () => {
     if (!activeMemo) return
+    const html = editDivRef.current?.innerHTML ?? memoContent
     setSaving(true)
-    await supabase.from('memos').update({ content: memoContent }).eq('id', activeMemo.id)
-    setMemos(prev => prev.map(m => m.id === activeMemo.id ? { ...m, content: memoContent } : m))
+    await supabase.from('memos').update({ content: html }).eq('id', activeMemo.id)
+    setMemos(prev => prev.map(m => m.id === activeMemo.id ? { ...m, content: html } : m))
+    setMemoContent(html)
     setSaving(false)
     setEditingMemo(false)
   }, [activeMemo, memoContent])
@@ -314,22 +319,10 @@ export default function ProjectPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [editingMemo, saveMemo])
 
-  function insertColor(color: string) {
-    const ta = textareaRef.current
-    if (!ta) return
-    const start = ta.selectionStart
-    const end = ta.selectionEnd
-    const selected = memoContent.substring(start, end)
-    const insertion = color
-      ? `<span style="color:${color}">${selected || 'テキスト'}</span>`
-      : selected
-    const newContent = memoContent.substring(0, start) + insertion + memoContent.substring(end)
-    setMemoContent(newContent)
-    setTimeout(() => {
-      ta.focus()
-      ta.selectionStart = start + insertion.length
-      ta.selectionEnd = start + insertion.length
-    }, 0)
+  function applyFormat(command: string, value?: string) {
+    // onMouseDown で preventDefault しているのでフォーカスは残っている
+    document.execCommand(command, false, value)
+    editDivRef.current?.focus()
   }
 
   async function handleTaskDragEnd(event: DragEndEvent) {
@@ -499,35 +492,51 @@ export default function ProjectPage() {
             </button>
           </div>
 
-          {/* 文字色ツールバー（編集中のみ表示） */}
+          {/* 書式ツールバー（編集中のみ） */}
           {editingMemo && (
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <span className="text-xs text-gray-400">文字色：</span>
+            <div className="flex items-center gap-1.5 mb-2 flex-wrap border border-gray-200 rounded-lg px-3 py-2 bg-gray-50">
+              <span className="text-xs text-gray-400 mr-1">文字色：</span>
               {TEXT_COLORS.map(c => (
                 <button key={c.value}
-                  onClick={() => insertColor(c.value)}
+                  onMouseDown={e => { e.preventDefault(); applyFormat('foreColor', c.value) }}
                   title={c.label}
                   className={`w-5 h-5 rounded-full ${c.cls} hover:scale-110 transition-transform flex-shrink-0 border border-white shadow-sm`}
                 />
               ))}
-              <span className="text-xs text-gray-300">（文字を選択してから色ボタンをクリック）</span>
+              <div className="w-px h-4 bg-gray-300 mx-1" />
+              <button
+                onMouseDown={e => { e.preventDefault(); applyFormat('bold') }}
+                className="text-xs font-bold text-gray-700 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-200 transition-colors"
+                title="太字">
+                B
+              </button>
+              <span className="text-xs text-gray-300 ml-2">文字を選択して押す</span>
             </div>
           )}
 
           {/* メモ本文 */}
           {editingMemo ? (
             <div className="space-y-3">
-              <textarea ref={textareaRef} autoFocus value={memoContent}
-                onChange={e => setMemoContent(e.target.value)}
-                className="w-full min-h-[400px] border border-gray-300 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-400 resize-y"
-                placeholder="自由に書けます（Enterで改行）"
+              <div
+                key={`edit-${activeMemoId}`}
+                ref={editDivRef}
+                contentEditable
+                suppressContentEditableWarning
+                onPaste={e => {
+                  e.preventDefault()
+                  const text = e.clipboardData.getData('text/plain')
+                  document.execCommand('insertText', false, text)
+                }}
+                dangerouslySetInnerHTML={{ __html: renderContent(memoContent) }}
+                className="w-full min-h-[400px] border border-gray-300 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
               />
               <div className="flex gap-2 items-center">
                 <button onClick={saveMemo} disabled={saving}
                   className="text-sm bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-40">
                   {saving ? '保存中...' : '保存'}
                 </button>
-                <button onClick={() => { setEditingMemo(false); setMemoContent(activeMemo?.content ?? '') }}
+                <button onClick={() => setEditingMemo(false)}
                   className="text-sm text-gray-500 px-3 py-2 rounded-lg hover:bg-gray-200">
                   キャンセル
                 </button>
@@ -538,11 +547,11 @@ export default function ProjectPage() {
             <div onClick={() => setEditingMemo(true)}
               className="min-h-[200px] cursor-text border border-transparent hover:border-gray-200 rounded-lg px-1 py-1 transition-colors">
               {memoContent ? (
-                <div className="prose text-sm max-w-none">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw]}>
-                    {memoContent}
-                  </ReactMarkdown>
-                </div>
+                <div
+                  className="text-sm"
+                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                  dangerouslySetInnerHTML={{ __html: renderContent(memoContent) }}
+                />
               ) : (
                 <p className="text-gray-300 text-sm">クリックしてメモを書く...</p>
               )}
