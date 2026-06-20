@@ -191,6 +191,13 @@ function MindMapCanvas({ projectId }: { projectId: string }) {
     setEditingId(null)
   }
 
+  function deleteNode() {
+    if (!editingId) return
+    setNodes(ns => ns.filter(n => n.id !== editingId))
+    setEdges(es => es.filter(e => e.source !== editingId && e.target !== editingId))
+    setEditingId(null)
+  }
+
   return (
     <div className="relative mt-4" style={{ height: 540 }}>
       <div className="absolute inset-0 border border-gray-200 rounded-lg overflow-hidden"
@@ -284,6 +291,10 @@ function MindMapCanvas({ projectId }: { projectId: string }) {
                 キャンセル
               </button>
             </div>
+            <button onClick={deleteNode}
+              className="w-full text-sm text-red-500 py-1.5 rounded hover:bg-red-50 border border-red-200">
+              このノードを削除
+            </button>
           </div>
         </div>
       )}
