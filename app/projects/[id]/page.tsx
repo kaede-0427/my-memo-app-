@@ -460,6 +460,9 @@ export default function ProjectPage() {
         ))}
       </div>
 
+      {/* タブコンテンツ（高さ固定でレイアウトずれを防ぐ） */}
+      <div className="min-h-[560px]">
+
       {/* メモタブ */}
       {mainTab === 'memo' && (
         <div>
@@ -596,6 +599,7 @@ export default function ProjectPage() {
           )}
         </div>
       )}
+      </div>{/* /min-h-[560px] */}
     </div>
   )
 }
