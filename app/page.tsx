@@ -14,8 +14,20 @@ import { CSS } from '@dnd-kit/utilities'
 import { supabase } from '@/lib/supabase'
 import type { Project, Task, Priority, Status } from '@/types/database'
 import IconUploader from '@/components/IconUploader'
-import PriorityBadge from '@/components/PriorityBadge'
-import StatusBadge from '@/components/StatusBadge'
+
+const PRIORITY_SELECT_CLASS: Record<Priority, string> = {
+  high:   'bg-red-100 text-red-700 border-red-200',
+  medium: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+  low:    'bg-blue-100 text-blue-700 border-blue-200',
+}
+
+const STATUS_SELECT_CLASS: Record<Status, string> = {
+  todo:        'bg-gray-100 text-gray-600 border-gray-200',
+  in_progress: 'bg-blue-100 text-blue-700 border-blue-200',
+  on_hold:     'bg-orange-100 text-orange-700 border-orange-200',
+  review:      'bg-purple-100 text-purple-700 border-purple-200',
+  done:        'bg-green-100 text-green-700 border-green-200',
+}
 
 // ---- Icons ----
 function GripIcon() {
@@ -57,12 +69,12 @@ const STATUS_OPTIONS: { value: Status; label: string }[] = [
   { value: 'done', label: '完了' },
 ]
 
-function TaskRow({ task, onToggleDone }: { task: Task; onToggleDone: (t: Task) => void }) {
+function TaskRow({ task, onUpdate }: { task: Task; onUpdate: (t: Task) => void }) {
   const done = task.status === 'done'
   return (
-    <div className={`flex items-center gap-2.5 py-1.5 ${done ? 'opacity-50' : ''}`}>
+    <div className={`flex items-center gap-2 py-1.5 ${done ? 'opacity-50' : ''}`}>
       <button
-        onClick={() => onToggleDone(task)}
+        onClick={() => onUpdate({ ...task, status: done ? 'todo' : 'done' })}
         className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
           done ? 'bg-gray-800 border-gray-800' : 'border-gray-300 hover:border-gray-500'
         }`}
@@ -73,8 +85,24 @@ function TaskRow({ task, onToggleDone }: { task: Task; onToggleDone: (t: Task) =
         {task.title}
       </span>
       <div className="flex items-center gap-1 flex-shrink-0">
-        <PriorityBadge priority={task.priority} />
-        <StatusBadge status={task.status} />
+        <select
+          value={task.priority}
+          onChange={e => onUpdate({ ...task, priority: e.target.value as Priority })}
+          onClick={e => e.stopPropagation()}
+          className={`text-xs px-1.5 py-0.5 rounded border cursor-pointer focus:outline-none font-medium ${PRIORITY_SELECT_CLASS[task.priority]}`}
+        >
+          <option value="high">高</option>
+          <option value="medium">中</option>
+          <option value="low">低</option>
+        </select>
+        <select
+          value={task.status}
+          onChange={e => onUpdate({ ...task, status: e.target.value as Status })}
+          onClick={e => e.stopPropagation()}
+          className={`text-xs px-1.5 py-0.5 rounded border cursor-pointer focus:outline-none font-medium ${STATUS_SELECT_CLASS[task.status]}`}
+        >
+          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
         {task.due_date && <span className="text-xs text-gray-400">{task.due_date}</span>}
       </div>
     </div>
@@ -153,7 +181,7 @@ interface SortableProjectProps {
   isExpanded: boolean
   onToggle: () => void
   tasks: Task[]
-  onTaskToggleDone: (t: Task) => void
+  onTaskUpdate: (t: Task) => void
   onTaskAdd: (t: Task) => void
 }
 
@@ -162,7 +190,7 @@ function SortableProject({
   onStartRename, onSaveRename, onRenameChange, onRenameKeyDown,
   onDelete, onIconChange,
   isExpanded, onToggle, tasks,
-  onTaskToggleDone, onTaskAdd,
+  onTaskUpdate, onTaskAdd,
 }: SortableProjectProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: project.id })
@@ -246,7 +274,7 @@ function SortableProject({
                 <p className="text-xs text-gray-300 py-1">タスクがありません</p>
               )}
               {activeTasks.map(task => (
-                <TaskRow key={task.id} task={task} onToggleDone={onTaskToggleDone} />
+                <TaskRow key={task.id} task={task} onUpdate={onTaskUpdate} />
               ))}
               {doneTasks.length > 0 && (
                 <details className="mt-1">
@@ -255,7 +283,7 @@ function SortableProject({
                   </summary>
                   <div className="mt-1 space-y-0.5">
                     {doneTasks.map(task => (
-                      <TaskRow key={task.id} task={task} onToggleDone={onTaskToggleDone} />
+                      <TaskRow key={task.id} task={task} onUpdate={onTaskUpdate} />
                     ))}
                   </div>
                 </details>
@@ -344,10 +372,11 @@ export default function HomePage() {
     })
   }
 
-  async function handleTaskToggleDone(task: Task) {
-    const next: Status = task.status === 'done' ? 'todo' : 'done'
+  async function handleTaskUpdate(task: Task) {
     const { data, error } = await supabase
-      .from('tasks').update({ status: next }).eq('id', task.id).select().single()
+      .from('tasks')
+      .update({ status: task.status, priority: task.priority })
+      .eq('id', task.id).select().single()
     if (!error && data) {
       setProjectTasks(prev => ({
         ...prev,
@@ -486,7 +515,7 @@ export default function HomePage() {
                   isExpanded={expandedProjects.has(project.id)}
                   onToggle={() => toggleProject(project.id)}
                   tasks={projectTasks[project.id] || []}
-                  onTaskToggleDone={handleTaskToggleDone}
+                  onTaskUpdate={handleTaskUpdate}
                   onTaskAdd={task => handleTaskAdd(project.id, task)}
                 />
               ))}
