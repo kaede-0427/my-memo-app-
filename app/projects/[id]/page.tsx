@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, memo } from 'react'
+import { useEffect, useState, useCallback, useRef, memo, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -151,10 +151,10 @@ const SortableTask = memo(function SortableTask({
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }
 
   async function save() {
-    const { data, error } = await supabase
-      .from('tasks').update({ title, status, priority, due_date: dueDate || null })
-      .eq('id', task.id).select().single()
-    if (!error && data) { onUpdate(data); setEditing(false) }
+    const updated = { ...task, title, status, priority, due_date: dueDate || null }
+    onUpdate(updated)  // 楽観的更新
+    setEditing(false)
+    supabase.from('tasks').update({ title, status, priority, due_date: dueDate || null }).eq('id', task.id)
   }
 
   async function remove() {
@@ -163,11 +163,10 @@ const SortableTask = memo(function SortableTask({
     onDelete(task.id)
   }
 
-  async function toggleDone() {
+  function toggleDone() {
     const next: Status = task.status === 'done' ? 'todo' : 'done'
-    const { data, error } = await supabase
-      .from('tasks').update({ status: next }).eq('id', task.id).select().single()
-    if (!error && data) onUpdate(data)
+    onUpdate({ ...task, status: next })  // 楽観的更新
+    supabase.from('tasks').update({ status: next }).eq('id', task.id)
   }
 
   if (editing) {
@@ -407,8 +406,8 @@ export default function ProjectPage() {
     setTasks(prev => [...prev, task])
   }, [])
 
-  const doneTasks = tasks.filter(t => t.status === 'done')
-  const activeTasks = tasks.filter(t => t.status !== 'done')
+  const doneTasks = useMemo(() => tasks.filter(t => t.status === 'done'), [tasks])
+  const activeTasks = useMemo(() => tasks.filter(t => t.status !== 'done'), [tasks])
 
   if (loading) {
     return <div className="max-w-2xl mx-auto px-4 py-10 text-gray-400 text-sm">読み込み中...</div>

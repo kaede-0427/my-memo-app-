@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, memo, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
@@ -69,7 +69,7 @@ const STATUS_OPTIONS: { value: Status; label: string }[] = [
   { value: 'done', label: '完了' },
 ]
 
-function TaskRow({ task, onUpdate }: { task: Task; onUpdate: (t: Task) => void }) {
+const TaskRow = memo(function TaskRow({ task, onUpdate }: { task: Task; onUpdate: (t: Task) => void }) {
   const done = task.status === 'done'
   return (
     <div className={`flex items-center gap-2 py-1.5 ${done ? 'opacity-50' : ''}`}>
@@ -107,7 +107,7 @@ function TaskRow({ task, onUpdate }: { task: Task; onUpdate: (t: Task) => void }
       </div>
     </div>
   )
-}
+})
 
 // ---- Quick add form inside accordion ----
 function QuickAddTask({ projectId, nextPosition, onAdd, onCancel }: {
@@ -185,7 +185,7 @@ interface SortableProjectProps {
   onTaskAdd: (t: Task) => void
 }
 
-function SortableProject({
+const SortableProject = memo(function SortableProject({
   project, renamingId, renameValue, renameRef,
   onStartRename, onSaveRename, onRenameChange, onRenameKeyDown,
   onDelete, onIconChange,
@@ -198,8 +198,8 @@ function SortableProject({
 
   const [showQuickAdd, setShowQuickAdd] = useState(false)
 
-  const activeTasks = tasks.filter(t => t.status !== 'done')
-  const doneTasks = tasks.filter(t => t.status === 'done')
+  const activeTasks = useMemo(() => tasks.filter(t => t.status !== 'done'), [tasks])
+  const doneTasks = useMemo(() => tasks.filter(t => t.status === 'done'), [tasks])
 
   return (
     <li ref={setNodeRef} style={style}>
@@ -310,7 +310,7 @@ function SortableProject({
       </div>
     </li>
   )
-}
+})
 
 // ---- Home page ----
 export default function HomePage() {
@@ -334,13 +334,16 @@ export default function HomePage() {
   useEffect(() => {
     async function load() {
       const { data: projectsData } = await supabase
-        .from('projects').select('*').order('position', { ascending: true })
+        .from('projects')
+        .select('id, name, icon, position, created_at')
+        .order('position', { ascending: true })
 
       if (projectsData) {
         setProjects(projectsData)
         if (projectsData.length > 0) {
           const { data: tasksData } = await supabase
-            .from('tasks').select('*')
+            .from('tasks')
+            .select('id, project_id, title, status, priority, due_date, position, created_at')
             .in('project_id', projectsData.map(p => p.id))
             .order('position', { ascending: true })
 
@@ -372,25 +375,23 @@ export default function HomePage() {
     })
   }
 
-  async function handleTaskUpdate(task: Task) {
-    const { data, error } = await supabase
-      .from('tasks')
+  const handleTaskUpdate = useCallback((task: Task) => {
+    // 楽観的更新：先に UI を更新し、バックグラウンドで DB 同期
+    setProjectTasks(prev => ({
+      ...prev,
+      [task.project_id]: (prev[task.project_id] || []).map(t => t.id === task.id ? task : t),
+    }))
+    supabase.from('tasks')
       .update({ status: task.status, priority: task.priority })
-      .eq('id', task.id).select().single()
-    if (!error && data) {
-      setProjectTasks(prev => ({
-        ...prev,
-        [task.project_id]: (prev[task.project_id] || []).map(t => t.id === task.id ? data : t),
-      }))
-    }
-  }
+      .eq('id', task.id)
+  }, [])
 
-  function handleTaskAdd(projectId: string, task: Task) {
+  const handleTaskAdd = useCallback((projectId: string, task: Task) => {
     setProjectTasks(prev => ({
       ...prev,
       [projectId]: [...(prev[projectId] || []), task],
     }))
-  }
+  }, [])
 
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
