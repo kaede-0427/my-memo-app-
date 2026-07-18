@@ -10,7 +10,7 @@ import {
 } from '@dnd-kit/core'
 import {
   SortableContext, sortableKeyboardCoordinates, useSortable,
-  verticalListSortingStrategy, horizontalListSortingStrategy, arrayMove,
+  verticalListSortingStrategy, arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { supabase } from '@/lib/supabase'
@@ -74,8 +74,8 @@ function GripIcon({ size = 14 }: { size?: number }) {
   )
 }
 
-// ---- Sortable Memo Tab ----
-interface SortableMemoTabProps {
+// ---- Sortable Memo Sidebar Item ----
+interface SortableMemoItemProps {
   memo: Memo
   isActive: boolean
   isRenaming: boolean
@@ -90,21 +90,21 @@ interface SortableMemoTabProps {
   onDelete: (id: string) => void
 }
 
-function SortableMemoTab({
+function SortableMemoItem({
   memo, isActive, isRenaming, renameRef, renameValue, memoCount,
   onSelect, onRenameStart, onRenameSave, onRenameChange, onRenameKeyDown, onDelete,
-}: SortableMemoTabProps) {
+}: SortableMemoItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: memo.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }
 
   return (
     <div ref={setNodeRef} style={style}
-      className={`group flex items-center gap-0.5 flex-shrink-0 border-b-2 -mb-px transition-colors ${
-        isActive ? 'border-gray-600 text-gray-800' : 'border-transparent text-gray-400 hover:text-gray-600'
+      className={`group flex items-center gap-1 rounded-lg px-2 py-1.5 transition-colors ${
+        isActive ? 'bg-gray-100 text-gray-900' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-700'
       }`}>
       <button {...attributes} {...listeners}
-        className="cursor-grab active:cursor-grabbing p-1 opacity-0 group-hover:opacity-100 touch-none transition-opacity flex-shrink-0"
+        className="cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 touch-none transition-opacity flex-shrink-0 p-0.5"
         tabIndex={-1}>
         <GripIcon size={10} />
       </button>
@@ -113,20 +113,21 @@ function SortableMemoTab({
           onChange={e => onRenameChange(e.target.value)}
           onBlur={() => onRenameSave(memo.id)}
           onKeyDown={e => onRenameKeyDown(e, memo.id)}
-          className="text-sm border-b border-gray-400 bg-transparent focus:outline-none w-20 px-1 py-2"
+          className="flex-1 text-sm border-b border-gray-400 bg-transparent focus:outline-none px-0.5 min-w-0"
         />
       ) : (
-        <button onClick={onSelect} className="text-sm px-1.5 py-2.5 whitespace-nowrap">
+        <button onClick={onSelect} className="flex-1 text-sm text-left truncate min-w-0">
           {memo.title}
         </button>
       )}
-      <button onClick={onRenameStart}
-        className="text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 text-xs transition-opacity px-0.5"
-        title="名前を変更">✎</button>
-      {memoCount > 1 && (
-        <button onClick={() => onDelete(memo.id)}
-          className="text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 text-xs transition-opacity pr-1">×</button>
-      )}
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <button onClick={onRenameStart}
+          className="text-gray-300 hover:text-gray-500 text-xs p-0.5" title="名前を変更">✎</button>
+        {memoCount > 1 && (
+          <button onClick={() => onDelete(memo.id)}
+            className="text-gray-300 hover:text-red-400 text-xs p-0.5">×</button>
+        )}
+      </div>
     </div>
   )
 }
@@ -291,8 +292,9 @@ export default function ProjectPage() {
 
   const activeMemo = memos.find(m => m.id === activeMemoId) ?? null
 
-  function switchMemo(memo: Memo) {
-    if (editingMemo) return
+  async function switchMemo(memo: Memo) {
+    if (memo.id === activeMemoId) return
+    if (editingMemo) await saveMemo()
     setActiveMemoId(memo.id)
     setMemoContent(memo.content)
   }
@@ -463,15 +465,15 @@ export default function ProjectPage() {
       {/* タブコンテンツ（高さ固定でレイアウトずれを防ぐ） */}
       <div className="min-h-[560px]">
 
-      {/* メモタブ */}
+      {/* メモタブ：左サイドバー + 右コンテンツ */}
       {mainTab === 'memo' && (
-        <div>
-          {/* メモサブタブ（ドラッグ並び替え対応） */}
-          <div className="flex items-center border-b border-gray-100 mb-4 overflow-x-auto">
+        <div className="flex mt-4" style={{ minHeight: '520px' }}>
+          {/* 左サイドバー（メモ一覧） */}
+          <div className="w-36 flex-shrink-0 border-r border-gray-100 flex flex-col pr-1 pt-1">
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleMemoTabDragEnd}>
-              <SortableContext items={memos.map(m => m.id)} strategy={horizontalListSortingStrategy}>
+              <SortableContext items={memos.map(m => m.id)} strategy={verticalListSortingStrategy}>
                 {memos.map(memo => (
-                  <SortableMemoTab
+                  <SortableMemoItem
                     key={memo.id}
                     memo={memo}
                     isActive={activeMemoId === memo.id}
@@ -490,76 +492,79 @@ export default function ProjectPage() {
               </SortableContext>
             </DndContext>
             <button onClick={addMemoTab}
-              className="text-gray-300 hover:text-gray-600 px-3 py-2 text-sm flex-shrink-0 transition-colors">
+              className="text-gray-300 hover:text-gray-600 px-3 py-2 text-xs text-left transition-colors mt-1">
               + 追加
             </button>
           </div>
 
-          {/* 書式ツールバー（編集中のみ） */}
-          {editingMemo && (
-            <div className="flex items-center gap-1.5 mb-2 flex-wrap border border-gray-200 rounded-lg px-3 py-2 bg-gray-50">
-              <span className="text-xs text-gray-400 mr-1">文字色：</span>
-              {TEXT_COLORS.map(c => (
-                <button key={c.value}
-                  onMouseDown={e => { e.preventDefault(); applyFormat('foreColor', c.value) }}
-                  title={c.label}
-                  className={`w-5 h-5 rounded-full ${c.cls} hover:scale-110 transition-transform flex-shrink-0 border border-white shadow-sm`}
-                />
-              ))}
-              <div className="w-px h-4 bg-gray-300 mx-1" />
-              <button
-                onMouseDown={e => { e.preventDefault(); applyFormat('bold') }}
-                className="text-xs font-bold text-gray-700 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-200 transition-colors"
-                title="太字">
-                B
-              </button>
-              <span className="text-xs text-gray-300 ml-2">文字を選択して押す</span>
-            </div>
-          )}
-
-          {/* メモ本文 */}
-          {editingMemo ? (
-            <div className="space-y-3">
-              <div
-                key={`edit-${activeMemoId}`}
-                ref={editDivRef}
-                contentEditable
-                suppressContentEditableWarning
-                onPaste={e => {
-                  e.preventDefault()
-                  const text = e.clipboardData.getData('text/plain')
-                  document.execCommand('insertText', false, text)
-                }}
-                dangerouslySetInnerHTML={{ __html: renderContent(memoContent) }}
-                className="w-full min-h-[400px] border border-gray-300 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
-                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-              />
-              <div className="flex gap-2 items-center">
-                <button onClick={saveMemo} disabled={saving}
-                  className="text-sm bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-40">
-                  {saving ? '保存中...' : '保存'}
+          {/* 右コンテンツ（メモ本文） */}
+          <div className="flex-1 min-w-0 pl-4 flex flex-col">
+            {/* 書式ツールバー（編集中のみ） */}
+            {editingMemo && (
+              <div className="flex items-center gap-1.5 mb-2 flex-wrap border border-gray-200 rounded-lg px-3 py-2 bg-gray-50">
+                <span className="text-xs text-gray-400 mr-1">文字色：</span>
+                {TEXT_COLORS.map(c => (
+                  <button key={c.value}
+                    onMouseDown={e => { e.preventDefault(); applyFormat('foreColor', c.value) }}
+                    title={c.label}
+                    className={`w-5 h-5 rounded-full ${c.cls} hover:scale-110 transition-transform flex-shrink-0 border border-white shadow-sm`}
+                  />
+                ))}
+                <div className="w-px h-4 bg-gray-300 mx-1" />
+                <button
+                  onMouseDown={e => { e.preventDefault(); applyFormat('bold') }}
+                  className="text-xs font-bold text-gray-700 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-200 transition-colors"
+                  title="太字">
+                  B
                 </button>
-                <button onClick={() => setEditingMemo(false)}
-                  className="text-sm text-gray-500 px-3 py-2 rounded-lg hover:bg-gray-200">
-                  キャンセル
-                </button>
-                <span className="text-xs text-gray-400">Ctrl+S でも保存</span>
+                <span className="text-xs text-gray-300 ml-2">文字を選択して押す</span>
               </div>
-            </div>
-          ) : (
-            <div onClick={() => setEditingMemo(true)}
-              className="min-h-[200px] cursor-text border border-transparent hover:border-gray-200 rounded-lg px-1 py-1 transition-colors">
-              {memoContent ? (
+            )}
+
+            {/* メモ本文 */}
+            {editingMemo ? (
+              <div className="space-y-3 flex-1">
                 <div
-                  className="text-sm"
-                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                  key={`edit-${activeMemoId}`}
+                  ref={editDivRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onPaste={e => {
+                    e.preventDefault()
+                    const text = e.clipboardData.getData('text/plain')
+                    document.execCommand('insertText', false, text)
+                  }}
                   dangerouslySetInnerHTML={{ __html: renderContent(memoContent) }}
+                  className="w-full min-h-[400px] border border-gray-300 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
                 />
-              ) : (
-                <p className="text-gray-300 text-sm">クリックしてメモを書く...</p>
-              )}
-            </div>
-          )}
+                <div className="flex gap-2 items-center">
+                  <button onClick={saveMemo} disabled={saving}
+                    className="text-sm bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-40">
+                    {saving ? '保存中...' : '保存'}
+                  </button>
+                  <button onClick={() => setEditingMemo(false)}
+                    className="text-sm text-gray-500 px-3 py-2 rounded-lg hover:bg-gray-200">
+                    キャンセル
+                  </button>
+                  <span className="text-xs text-gray-400">Ctrl+S でも保存</span>
+                </div>
+              </div>
+            ) : (
+              <div onClick={() => setEditingMemo(true)}
+                className="flex-1 min-h-[400px] cursor-text border border-transparent hover:border-gray-200 rounded-lg px-1 py-1 transition-colors">
+                {memoContent ? (
+                  <div
+                    className="text-sm"
+                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                    dangerouslySetInnerHTML={{ __html: renderContent(memoContent) }}
+                  />
+                ) : (
+                  <p className="text-gray-300 text-sm">クリックしてメモを書く...</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
