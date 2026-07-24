@@ -109,6 +109,57 @@ const TaskRow = memo(function TaskRow({ task, onUpdate }: { task: Task; onUpdate
   )
 })
 
+// ---- Sortable task row (active tasks only) ----
+function SortableTaskRow({ task, onUpdate }: { task: Task; onUpdate: (t: Task) => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: task.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : 1 }
+  const done = task.status === 'done'
+
+  return (
+    <div ref={setNodeRef} style={style}
+      className={`flex items-center gap-2 py-1.5 group ${done ? 'opacity-50' : ''}`}>
+      <button {...attributes} {...listeners}
+        className="cursor-grab active:cursor-grabbing p-0.5 flex-shrink-0 touch-none text-gray-300 hover:text-gray-400"
+        tabIndex={-1}>
+        <GripIcon />
+      </button>
+      <button
+        onClick={() => onUpdate({ ...task, status: done ? 'todo' : 'done' })}
+        className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
+          done ? 'bg-gray-800 border-gray-800' : 'border-gray-300 hover:border-gray-500'
+        }`}
+      >
+        {done && <CheckIcon />}
+      </button>
+      <span className={`text-sm flex-1 min-w-0 truncate ${done ? 'line-through text-gray-400' : 'text-gray-700'}`}>
+        {task.title}
+      </span>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <select
+          value={task.priority}
+          onChange={e => onUpdate({ ...task, priority: e.target.value as Priority })}
+          onClick={e => e.stopPropagation()}
+          className={`text-xs px-1.5 py-0.5 rounded border cursor-pointer focus:outline-none font-medium ${PRIORITY_SELECT_CLASS[task.priority]}`}
+        >
+          <option value="high">高</option>
+          <option value="medium">中</option>
+          <option value="low">低</option>
+        </select>
+        <select
+          value={task.status}
+          onChange={e => onUpdate({ ...task, status: e.target.value as Status })}
+          onClick={e => e.stopPropagation()}
+          className={`text-xs px-1.5 py-0.5 rounded border cursor-pointer focus:outline-none font-medium ${STATUS_SELECT_CLASS[task.status]}`}
+        >
+          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        {task.due_date && <span className="text-xs text-gray-400">{task.due_date}</span>}
+      </div>
+    </div>
+  )
+}
+
 // ---- Quick add form inside accordion ----
 function QuickAddTask({ projectId, nextPosition, onAdd, onCancel }: {
   projectId: string
@@ -183,6 +234,7 @@ interface SortableProjectProps {
   tasks: Task[]
   onTaskUpdate: (t: Task) => void
   onTaskAdd: (t: Task) => void
+  onTaskReorder: (projectId: string, tasks: Task[]) => void
 }
 
 const SortableProject = memo(function SortableProject({
@@ -190,7 +242,7 @@ const SortableProject = memo(function SortableProject({
   onStartRename, onSaveRename, onRenameChange, onRenameKeyDown,
   onDelete, onIconChange,
   isExpanded, onToggle, tasks,
-  onTaskUpdate, onTaskAdd,
+  onTaskUpdate, onTaskAdd, onTaskReorder,
 }: SortableProjectProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: project.id })
@@ -200,6 +252,21 @@ const SortableProject = memo(function SortableProject({
 
   const activeTasks = useMemo(() => tasks.filter(t => t.status !== 'done'), [tasks])
   const doneTasks = useMemo(() => tasks.filter(t => t.status === 'done'), [tasks])
+
+  const taskSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+  )
+
+  function handleTaskDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = activeTasks.findIndex(t => t.id === active.id)
+    const newIndex = activeTasks.findIndex(t => t.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+    const reordered = arrayMove(activeTasks, oldIndex, newIndex)
+    onTaskReorder(project.id, [...reordered, ...doneTasks])
+  }
 
   return (
     <li ref={setNodeRef} style={style}>
@@ -273,9 +340,13 @@ const SortableProject = memo(function SortableProject({
               {activeTasks.length === 0 && doneTasks.length === 0 && !showQuickAdd && (
                 <p className="text-xs text-gray-300 py-1">タスクがありません</p>
               )}
-              {activeTasks.map(task => (
-                <TaskRow key={task.id} task={task} onUpdate={onTaskUpdate} />
-              ))}
+              <DndContext sensors={taskSensors} collisionDetection={closestCenter} onDragEnd={handleTaskDragEnd}>
+                <SortableContext items={activeTasks.map(t => t.id)} strategy={verticalListSortingStrategy}>
+                  {activeTasks.map(task => (
+                    <SortableTaskRow key={task.id} task={task} onUpdate={onTaskUpdate} />
+                  ))}
+                </SortableContext>
+              </DndContext>
               {doneTasks.length > 0 && (
                 <details className="mt-1">
                   <summary className="text-xs text-gray-400 cursor-pointer select-none py-1 hover:text-gray-600">
@@ -391,6 +462,13 @@ export default function HomePage() {
       ...prev,
       [projectId]: [...(prev[projectId] || []), task],
     }))
+  }, [])
+
+  const handleTaskReorder = useCallback((projectId: string, reorderedTasks: Task[]) => {
+    setProjectTasks(prev => ({ ...prev, [projectId]: reorderedTasks }))
+    reorderedTasks.forEach((t, i) => {
+      supabase.from('tasks').update({ position: i }).eq('id', t.id)
+    })
   }, [])
 
   async function handleDragEnd(event: DragEndEvent) {
@@ -518,6 +596,7 @@ export default function HomePage() {
                   tasks={projectTasks[project.id] || []}
                   onTaskUpdate={handleTaskUpdate}
                   onTaskAdd={task => handleTaskAdd(project.id, task)}
+                  onTaskReorder={handleTaskReorder}
                 />
               ))}
             </ul>
