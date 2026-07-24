@@ -134,7 +134,7 @@ function MindMapCanvas({ projectId }: { projectId: string }) {
     if (!mindMapId || !initialized.current) return
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      supabase.from('mind_maps').update({ nodes, edges }).eq('id', mindMapId)
+      supabase.from('mind_maps').update({ nodes, edges }).eq('id', mindMapId).then()
     }, 2000)
     return () => clearTimeout(saveTimer.current)
   }, [nodes, edges, mindMapId])

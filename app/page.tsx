@@ -455,6 +455,7 @@ export default function HomePage() {
     supabase.from('tasks')
       .update({ status: task.status, priority: task.priority })
       .eq('id', task.id)
+      .then()
   }, [])
 
   const handleTaskAdd = useCallback((projectId: string, task: Task) => {
@@ -467,7 +468,7 @@ export default function HomePage() {
   const handleTaskReorder = useCallback((projectId: string, reorderedTasks: Task[]) => {
     setProjectTasks(prev => ({ ...prev, [projectId]: reorderedTasks }))
     reorderedTasks.forEach((t, i) => {
-      supabase.from('tasks').update({ position: i }).eq('id', t.id)
+      supabase.from('tasks').update({ position: i }).eq('id', t.id).then()
     })
   }, [])
 

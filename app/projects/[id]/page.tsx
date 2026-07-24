@@ -154,7 +154,7 @@ const SortableTask = memo(function SortableTask({
     const updated = { ...task, title, status, priority, due_date: dueDate || null }
     onUpdate(updated)  // 楽観的更新
     setEditing(false)
-    supabase.from('tasks').update({ title, status, priority, due_date: dueDate || null }).eq('id', task.id)
+    supabase.from('tasks').update({ title, status, priority, due_date: dueDate || null }).eq('id', task.id).then()
   }
 
   async function remove() {
@@ -166,7 +166,7 @@ const SortableTask = memo(function SortableTask({
   function toggleDone() {
     const next: Status = task.status === 'done' ? 'todo' : 'done'
     onUpdate({ ...task, status: next })  // 楽観的更新
-    supabase.from('tasks').update({ status: next }).eq('id', task.id)
+    supabase.from('tasks').update({ status: next }).eq('id', task.id).then()
   }
 
   if (editing) {
